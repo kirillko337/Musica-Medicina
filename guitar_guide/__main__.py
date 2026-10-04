@@ -34,9 +34,19 @@ def main(argv=None) -> int:
     if args.title:
         meta["title"] = args.title
     wav = fetch.extract_audio(audio_src, work)
+    chord_wav, vocals_wav = wav, wav
+    if args.lyrics:
+        from . import lyrics
+        print("▶ Demucs: отделяю голос от гитары…", flush=True)
+        try:
+            stems = lyrics.separate(wav, work)
+            # аккорды и бой считаем по дорожке без голоса: голос сбивает Am/C и E/Em
+            chord_wav, vocals_wav = stems["no_vocals"], stems["vocals"]
+        except Exception as e:
+            print(f"  demucs не сработал ({e}), дальше по общей дорожке")
 
     print("▶ звук: темп, доли, аккорды…", flush=True)
-    res, y, sr = audio.analyze(wav, bpm=args.bpm, sevenths=args.sevenths)
+    res, y, sr = audio.analyze(chord_wav, bpm=args.bpm, sevenths=args.sevenths)
     print(f"  темп {res['tempo']} BPM, тональность {res['key']}, сегментов {len(res['segments'])}")
 
     print("▶ звук: бой…", flush=True)
@@ -72,9 +82,8 @@ def main(argv=None) -> int:
 
     words = None
     if args.lyrics:
-        from . import lyrics
-        print("▶ слова: отделяю голос и расшифровываю…", flush=True)
-        words = lyrics.analyze(wav, work, args.lang)
+        print("▶ слова: расшифровываю голос…", flush=True)
+        words = lyrics.analyze(vocals_wav, args.lang)
         print(f"  строк: {len(words['lines'])}")
 
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)

@@ -121,6 +121,33 @@ def chords(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, sevenths: bool =
     }
 
 
+def halfbars(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, phase: int) -> list[dict]:
+    """Аккорд на каждые две доли без сглаживания: лучший кандидат, второй и отрыв между ними.
+    Нужен, чтобы увидеть короткие проходящие аккорды, которые Витерби склеивает."""
+    C = librosa.feature.chroma_cqt(y=y_harm, sr=sr, hop_length=HOP, bins_per_octave=36)
+    B = librosa.feature.chroma_cqt(y=y_harm, sr=sr, hop_length=HOP, bins_per_octave=36,
+                                   fmin=librosa.note_to_hz("E1"), n_octaves=2)
+    ft = librosa.times_like(C, sr=sr, hop_length=HOP)
+    labels, tpl = theory.templates(("", "m", "7", "m7"))
+    roots = [theory.parse(l)[0] for l in labels]
+    out = []
+    for i in range(phase, len(beat_times) - 1, 2):
+        a, b = beat_times[i], beat_times[min(i + 2, len(beat_times) - 1)]
+        m = (ft >= a) & (ft < b)
+        if not m.any():
+            continue
+        c = np.median(C[:, m], 1)
+        c /= np.linalg.norm(c) + 1e-9
+        bs = np.median(B[:, m], 1)
+        bs /= bs.max() + 1e-9
+        sc = tpl @ c + 0.15 * bs[roots]
+        sc[24:] -= 0.04
+        o = np.argsort(-sc)[:2]
+        out.append({"t": round(float(a), 2), "chord": labels[o[0]], "second": labels[o[1]],
+                    "margin": round(float(sc[o[0]] - sc[o[1]]), 3)})
+    return out
+
+
 def downbeat_phase(grid_chords: list[str], beats_per_bar: int = 4) -> int:
     """Сильная доля: на какую фазу чаще всего приходится смена аккорда."""
     counts = np.zeros(beats_per_bar)
@@ -143,4 +170,5 @@ def analyze(path: str, bpm: float | None = None, sevenths: bool = False) -> tupl
     # аккорды по долям (без затакта до первой доли)
     res["beat_chords"] = res["grid_chords"][res["grid_pickup"]:][: len(beat_times)]
     res["downbeat_phase"] = downbeat_phase(res["beat_chords"])
+    res["halfbars"] = halfbars(y_harm, sr, beat_times, res["downbeat_phase"])
     return res, y, sr

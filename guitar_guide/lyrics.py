@@ -6,11 +6,12 @@ import sys
 from pathlib import Path
 
 
-def separate_vocals(wav: str, work: Path) -> str:
+def separate(wav: str, work: Path) -> dict:
+    """{'vocals': голос, 'no_vocals': всё остальное, то есть гитара}."""
     out = work / "demucs"
     subprocess.run([sys.executable, "-m", "demucs", "--two-stems=vocals", "-n", "htdemucs", "-o", str(out), wav],
                    check=True)
-    return str(next(out.rglob("vocals.wav")))
+    return {"vocals": str(next(out.rglob("vocals.wav"))), "no_vocals": str(next(out.rglob("no_vocals.wav")))}
 
 
 def transcribe(audio: str, language: str | None = None, model: str = "large-v3") -> list[dict]:
@@ -27,12 +28,7 @@ def transcribe(audio: str, language: str | None = None, model: str = "large-v3")
     return lines
 
 
-def analyze(wav: str, work: Path, language: str | None = None) -> dict:
-    try:
-        vocals = separate_vocals(wav, work)
-    except Exception as e:  # без Demucs тоже работает, просто хуже
-        print(f"  demucs не сработал ({e}), распознаю по общей дорожке")
-        vocals = wav
+def analyze(vocals: str, language: str | None = None) -> dict:
     return {"language": language, "lines": transcribe(vocals, language)}
 
 
