@@ -1,0 +1,16 @@
+name: Разбор песни
+description: Пришлите ссылку на YouTube — бот соберёт аккорды и бой и ответит в этом issue
+title: "Разбор: "
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Ссылка на видео
+      placeholder: https://youtu.be/...
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Комментарий (необязательно)
+      description: Например, «интересует только припев» — пока бот это не читает, но пригодится вам

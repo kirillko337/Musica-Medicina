@@ -1,0 +1,177 @@
+name: Разбор песни
+
+on:
+  # вручную: Actions → «Разбор песни» → Run workflow
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Ссылка на YouTube или путь к файлу в репозитории (inputs/song.mp4)"
+        required: true
+      title:
+        description: "Название (необязательно)"
+        required: false
+      bpm:
+        description: "Темп вручную, если автоматика ошиблась вдвое (необязательно)"
+        required: false
+      vision:
+        description: "Сверять с видео через Claude"
+        type: boolean
+        default: true
+  # с телефона: новый issue по шаблону «Разбор песни»
+  issues:
+    types: [opened]
+  # загрузили видео/аудио в папку inputs/
+  push:
+    paths: ["inputs/**"]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: guitar-guide
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name != 'issues' || startsWith(github.event.issue.title, 'Разбор')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install -r requirements.txt
+      - name: Тесты на синтетике
+        run: python -m pytest -q tests
+
+  guide:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - run: pip install -r requirements.txt
+
+      - name: Что разбираем
+        id: src
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_SOURCE: ${{ inputs.source }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            workflow_dispatch) printf '%s\n' "$INPUT_SOURCE" > sources.txt ;;
+            issues) printf '%s\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" | grep -oE 'https?://[^ )>"]+' | head -1 > sources.txt || true ;;
+            push)
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+                git ls-files inputs > all.txt
+              else
+                git diff --name-only --diff-filter=AM "$BEFORE" HEAD -- inputs > all.txt
+              fi
+              grep -iE '\.(mp4|mov|mkv|webm|m4v|avi|mp3|wav|m4a|ogg|flac)$' all.txt > sources.txt || true ;;
+          esac
+          echo "Источники:"; cat sources.txt
+          if [ ! -s sources.txt ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cookies для YouTube
+        if: steps.src.outputs.empty != 'true'
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          if [ -n "$YT_COOKIES" ]; then
+            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/cookies.txt"
+            echo "YT_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
+          fi
+
+      - name: Разбор
+        id: run
+        if: steps.src.outputs.empty != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TITLE: ${{ inputs.title }}
+          BPM: ${{ inputs.bpm }}
+          VISION: ${{ github.event_name != 'workflow_dispatch' || inputs.vision }}
+        run: |
+          set -o pipefail
+          : > guides_done.txt
+          while IFS= read -r src; do
+            [ -z "$src" ] && continue
+            args=("$src" --out guides)
+            [ -n "$TITLE" ] && args+=(--title "$TITLE")
+            [ -n "$BPM" ] && args+=(--bpm "$BPM")
+            [ "$VISION" != "true" ] && args+=(--no-vision)
+            python -m guitar_guide "${args[@]}" 2>&1 | tee run.log
+            grep -oE 'guide_md=.*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- >> guides_done.txt
+          done < sources.txt
+
+      - name: Сохранить гайд в репозиторий
+        if: steps.run.outcome == 'success'
+        run: |
+          git config user.name "guitar-guide-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add guides
+          git diff --cached --quiet && exit 0
+          git commit -m "Разбор: $(head -1 guides_done.txt | xargs dirname | xargs basename)"
+          for i in 1 2 3; do git pull --rebase -q && git push && break; sleep 5; done
+
+      - name: Ответ в issue
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number }}
+          OUTCOME: ${{ steps.run.outcome }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = "success" ] && [ -s guides_done.txt ]; then
+            md=$(head -1 guides_done.txt)
+            dir=$(dirname "$md")
+            {
+              echo "Готово, полный гайд со схемами аккордов: https://github.com/$REPO/blob/${GITHUB_REF_NAME}/$dir/README.md"
+              echo
+              sed -e '/^<img/d' "$md"
+            } > comment.md
+            gh issue comment "$NUM" --repo "$REPO" --body-file comment.md
+          else
+            {
+              echo "Не получилось собрать разбор. Лог: $RUN_URL"
+              echo
+              if grep -qiE 'sign in|bot|403|cookies' run.log 2>/dev/null; then
+                echo "YouTube не отдал видео серверу GitHub (проверка «вы не робот»). Варианты:"
+                echo "- добавить секрет \`YT_COOKIES\` с cookies.txt из браузера (см. README);"
+                echo "- скачать видео самому и положить файл в папку \`inputs/\` — разбор запустится сам."
+              fi
+              echo
+              echo '```'
+              tail -15 run.log 2>/dev/null || true
+              echo '```'
+            } > comment.md
+            gh issue comment "$NUM" --repo "$REPO" --body-file comment.md
+          fi
+
+      - name: Артефакт
+        if: always() && steps.src.outputs.empty != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: guide
+          path: |
+            guides/
+            run.log
+          if-no-files-found: ignore
