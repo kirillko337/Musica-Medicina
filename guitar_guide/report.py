@@ -38,7 +38,7 @@ def main_loop(bar_list: list[dict], size: int = 4) -> tuple[list[str], int] | No
 
 
 def write(out_dir: Path, meta: dict, res: dict, st: dict, segs: list[dict], capo: int, capo_src: str,
-          vision_info: dict | None) -> Path:
+          vision_info: dict | None, words: dict | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     cdir = out_dir / "chords"
     cdir.mkdir(exist_ok=True)
@@ -108,6 +108,27 @@ def write(out_dir: Path, meta: dict, res: dict, st: dict, segs: list[dict], capo
                  "Там, где точка, рука всё равно делает движение, просто не задевает струны.\n")
     else:
         L.append("Чёткий повторяющийся бой не нашёлся — возможно, здесь перебор или свободный ритм.\n")
+
+    if words and words.get("lines"):
+        from .lyrics import chord_line
+
+        def chord_at(t):
+            for s in segs:
+                if s["start"] <= t < s["end"]:
+                    return s["shape"]
+            return "N"
+
+        L.append("## Текст с аккордами\n")
+        L.append("Аккорд стоит над словом, на котором его нужно сменить. Слева время в ролике. "
+                 "Текст распознан автоматически: в редких словах возможны ошибки.\n")
+        L.append("```")
+        for ln in words["lines"]:
+            top, bottom = chord_line(ln["words"], chord_at)
+            pad = " " * 7
+            L.append(pad + top)
+            L.append(f"{_mmss(ln['start']):>5}  " + bottom)
+            L.append("")
+        L.append("```\n")
 
     L.append("## Слух против зрения\n")
     if vision_info:

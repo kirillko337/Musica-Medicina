@@ -17,6 +17,13 @@ on:
         description: "Сверять с видео через Claude"
         type: boolean
         default: true
+      lyrics:
+        description: "Распознать слова (Demucs + Whisper, +10–15 минут)"
+        type: boolean
+        default: true
+      lang:
+        description: "Язык песни: es, ru, en… (пусто — определит сам)"
+        required: false
   # с телефона: новый issue по шаблону «Разбор песни»
   issues:
     types: [opened]
@@ -50,7 +57,7 @@ jobs:
   guide:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,6 +71,12 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - run: pip install -r requirements.txt
+
+      - name: Модели для слов
+        if: github.event_name != 'workflow_dispatch' || inputs.lyrics
+        run: |
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-lyrics.txt
 
       # yt-dlp нужен JS-движок, чтобы YouTube отдал все форматы
       - uses: denoland/setup-deno@v2
@@ -113,6 +126,8 @@ jobs:
           TITLE: ${{ inputs.title }}
           BPM: ${{ inputs.bpm }}
           VISION: ${{ github.event_name != 'workflow_dispatch' || inputs.vision }}
+          LYRICS: ${{ github.event_name != 'workflow_dispatch' || inputs.lyrics }}
+          LANG_IN: ${{ inputs.lang }}
         run: |
           set -o pipefail
           : > guides_done.txt
@@ -122,6 +137,8 @@ jobs:
             [ -n "$TITLE" ] && args+=(--title "$TITLE")
             [ -n "$BPM" ] && args+=(--bpm "$BPM")
             [ "$VISION" != "true" ] && args+=(--no-vision)
+            [ "$LYRICS" = "true" ] && args+=(--lyrics)
+            [ -n "$LANG_IN" ] && args+=(--lang "$LANG_IN")
             python -m guitar_guide "${args[@]}" 2>&1 | tee run.log
             grep -oE 'guide_md=.*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- >> guides_done.txt
           done < sources.txt

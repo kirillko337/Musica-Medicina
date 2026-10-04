@@ -19,6 +19,8 @@ def main(argv=None) -> int:
     ap.add_argument("--sevenths", action="store_true", help="искать септаккорды (7, m7)")
     ap.add_argument("--no-vision", action="store_true")
     ap.add_argument("--max-vision-calls", type=int, default=24)
+    ap.add_argument("--lyrics", action="store_true", help="распознать слова (Demucs + Whisper, нужен интернет)")
+    ap.add_argument("--lang", help="язык песни для Whisper: es, ru, en… (по умолчанию определит сам)")
     args = ap.parse_args(argv)
 
     work = Path(args.work)
@@ -68,14 +70,21 @@ def main(argv=None) -> int:
     elif not args.no_vision:
         print("▶ видео пропущено: нет файла видео или ANTHROPIC_API_KEY")
 
+    words = None
+    if args.lyrics:
+        from . import lyrics
+        print("▶ слова: отделяю голос и расшифровываю…", flush=True)
+        words = lyrics.analyze(wav, work, args.lang)
+        print(f"  строк: {len(words['lines'])}")
+
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)
     name = fetch.slug(meta.get("title") or meta.get("id") or "song")
     out_dir = Path(args.out) / name
-    path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info)
+    path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info, words)
 
     dump = {"meta": {k: v for k, v in meta.items() if k not in ("video", "audio_src")}, "audio": res,
             "strum": st, "capo": capo, "capo_options": capo_opts[:3], "segments": segs,
-            "vision": vision_info, "vision_raw": vis_rows}
+            "vision": vision_info, "vision_raw": vis_rows, "lyrics": words}
     (out_dir / "analysis.json").write_text(json.dumps(dump, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"✔ гайд: {path}")
     gh_out = Path(__import__("os").environ.get("GITHUB_OUTPUT", "/dev/null"))
