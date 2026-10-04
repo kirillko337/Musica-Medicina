@@ -175,7 +175,7 @@ def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_p
         h = bool(hits[i])
         # маятник на выбранной сетке: вниз на чётных позициях, вверх на нечётных
         slots.append({"hit": h, "dir": ("down" if (i // (4 // sub)) % 2 == 0 else "up") if h else None,
-                      "accent": h and med[i] >= accent, "strength": round(float(med[i]), 2)})
+                      "accent": bool(h and med[i] >= accent), "strength": round(float(med[i]), 2)})
     return {"subdiv": sub, "slots": slots, "bars_matching": matching, "bars_total": int(len(R)),
             "variants": [], "profile16": [round(float(v), 2) for v in med]}
 

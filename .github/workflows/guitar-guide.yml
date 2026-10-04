@@ -21,6 +21,10 @@ on:
         description: "Распознать слова (Demucs + Whisper, +10–15 минут)"
         type: boolean
         default: true
+      stems:
+        description: "Сохранить гитару и голос отдельными файлами в папку гайда"
+        type: boolean
+        default: false
       lang:
         description: "Язык песни: es, ru, en… (пусто — определит сам)"
         required: false
@@ -76,7 +80,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Модели для слов
-        if: github.event_name != 'workflow_dispatch' || inputs.lyrics
+        if: github.event_name != 'workflow_dispatch' || inputs.lyrics || inputs.stems
         run: |
           pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-lyrics.txt
@@ -132,6 +136,7 @@ jobs:
           LYRICS: ${{ github.event_name != 'workflow_dispatch' || inputs.lyrics }}
           LANG_IN: ${{ inputs.lang }}
           HINT: ${{ inputs.hint }}
+          STEMS: ${{ inputs.stems }}
         run: |
           set -o pipefail
           : > guides_done.txt
@@ -144,6 +149,7 @@ jobs:
             [ "$LYRICS" = "true" ] && args+=(--lyrics)
             [ -n "$LANG_IN" ] && args+=(--lang "$LANG_IN")
             [ -n "$HINT" ] && args+=(--lyrics-hint "$HINT")
+            [ "$STEMS" = "true" ] && args+=(--save-stems)
             python -m guitar_guide "${args[@]}" 2>&1 | tee run.log
             grep -oE 'guide_md=.*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- >> guides_done.txt
           done < sources.txt

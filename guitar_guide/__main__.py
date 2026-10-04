@@ -20,6 +20,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-vision", action="store_true")
     ap.add_argument("--max-vision-calls", type=int, default=24)
     ap.add_argument("--lyrics", action="store_true", help="распознать слова (Demucs + Whisper, нужен интернет)")
+    ap.add_argument("--separate", action="store_true", help="отделить голос от гитары (Demucs) без распознавания слов")
+    ap.add_argument("--save-stems", action="store_true", help="сохранить гитару и голос в папку гайда (.ogg)")
     ap.add_argument("--lyrics-hint", help="подсказка Whisper: редкие слова песни через запятую")
     ap.add_argument("--lang", help="язык песни для Whisper: es, ru, en… (по умолчанию определит сам)")
     args = ap.parse_args(argv)
@@ -36,7 +38,7 @@ def main(argv=None) -> int:
         meta["title"] = args.title
     wav = fetch.extract_audio(audio_src, work)
     chord_wav, vocals_wav = wav, wav
-    if args.lyrics:
+    if args.lyrics or args.separate or args.save_stems:
         from . import lyrics
         print("▶ Demucs: отделяю голос от гитары…", flush=True)
         try:
@@ -90,6 +92,12 @@ def main(argv=None) -> int:
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)
     name = fetch.slug(meta.get("title") or meta.get("id") or "song")
     out_dir = Path(args.out) / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.save_stems and chord_wav != wav:
+        import subprocess
+        for stem, src in (("guitar", chord_wav), ("vocals", vocals_wav)):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ac", "1", "-c:a", "libvorbis",
+                            "-q:a", "4", str(out_dir / f"{stem}.ogg")], check=True)
     path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info, words)
 
     dump = {"meta": {k: v for k, v in meta.items() if k not in ("video", "audio_src")}, "audio": res,
