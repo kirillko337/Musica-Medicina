@@ -70,6 +70,11 @@ def transcribe(audio: str, language: str | None = None, model: str = "large-v3",
                       "p": round(w.probability, 2)} for w in (s.words or []) if w.word.strip()]
             if not words:
                 continue
+            # Whisper любит повторять подсказку или выдумывать слова на проигрыше
+            low = sum(w["p"] < 0.4 for w in words) / len(words)
+            echo = prompt and sum(w["word"].strip(",.").lower() in prompt.lower() for w in words) / len(words) > 0.8
+            if low > 0.5 or echo:
+                continue
             got = True
             lines.append({"start": words[0]["start"], "end": words[-1]["end"], "text": text, "words": words,
                           "logprob": round(s.avg_logprob, 2)})
