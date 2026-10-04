@@ -135,6 +135,51 @@ def pattern(onset_list: list[dict], n_beats: int, phase: int, subdiv: int, beats
     }
 
 
+def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_per_bar: int = 4,
+            hit: float = 0.3, accent: float = 0.8) -> dict:
+    """Рисунок боя по средней силе удара на каждой из 16 шестнадцатых такта.
+
+    Пороговый детектор ударов теряет слабые удары, а «бой» как раз и состоит из сильных
+    и слабых. Поэтому берём огибающую атак и усредняем её по всем тактам песни:
+    случайные удары гасятся, повторяющийся рисунок остаётся. Сила 1.0 — удар на счёт."""
+    hop = 128
+    yp = librosa.effects.percussive(y, margin=2.0)
+    oe = librosa.onset.onset_strength(y=yp, sr=sr, hop_length=hop)
+    ot = librosa.times_like(oe, sr=sr, hop_length=hop)
+    bt = np.asarray(beat_times)
+
+    def at(t, w=0.03):
+        m = (ot > t - w) & (ot < t + w)
+        return float(oe[m].max()) if m.any() else 0.0
+
+    rows = []
+    for i in range(phase, len(bt) - beats_per_bar, beats_per_bar):
+        # равномерная сетка на весь такт: трекер долей дёргает отдельные доли на синкопах
+        b0, b1 = bt[i], bt[i + beats_per_bar]
+        n = beats_per_bar * 4
+        rows.append([at(b0 + j * (b1 - b0) / n) for j in range(n)])
+    if len(rows) < 2:
+        return {"subdiv": 4, "slots": [], "bars_matching": 0, "bars_total": 0, "variants": []}
+    R = np.array(rows)
+    loud = R.max(axis=1) > 0.3 * np.median(R.max(axis=1))  # такты, где вообще играют
+    R = R[loud] / (np.median(R[loud][:, ::4]) + 1e-9)
+    med = np.median(R, axis=0)
+    hits = med > hit
+    per_bar = (R > hit)
+    matching = int((per_bar == hits).all(axis=1).sum())
+    # нечётные шестнадцатые пустые → обычные восьмые
+    sub = 4 if hits[1::2].any() else 2
+    idx = range(0, len(med), 4 // sub)
+    slots = []
+    for i in idx:
+        h = bool(hits[i])
+        # маятник на выбранной сетке: вниз на чётных позициях, вверх на нечётных
+        slots.append({"hit": h, "dir": ("down" if (i // (4 // sub)) % 2 == 0 else "up") if h else None,
+                      "accent": h and med[i] >= accent, "strength": round(float(med[i]), 2)})
+    return {"subdiv": sub, "slots": slots, "bars_matching": matching, "bars_total": int(len(R)),
+            "variants": [], "profile16": [round(float(v), 2) for v in med]}
+
+
 def analyze(y: np.ndarray, sr: int, beat_times: list[float], phase: int) -> dict:
     ons = [o for o in onsets(y, sr) if o["strength"] >= 0.4]  # отсекаем звон и шум
     subdiv = choose_subdivision(ons, beat_times)
@@ -143,7 +188,10 @@ def analyze(y: np.ndarray, sr: int, beat_times: list[float], phase: int) -> dict
     for o in ons:
         if o.get("pos") is not None:
             o["dir_rule"] = "down" if o["pos"] % 2 == 0 else "up"
-    pat = pattern(ons, len(beat_times), phase, subdiv)
+    pat = profile(y, sr, beat_times, phase)
+    for o in ons:  # направление по маятнику на той сетке, которую выбрал профиль
+        if o.get("pos") is not None and pat["subdiv"] != subdiv:
+            o["dir_rule"] = None
 
     # насколько акустика согласна с «маятником»
     checked = [o for o in ons if o.get("dir_rule") and o["dir_audio"] != "?"]

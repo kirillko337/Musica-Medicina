@@ -38,10 +38,11 @@ def strum(frets: list[int], direction: str, dur: float, rng, gain: float = 1.0, 
 
 
 def song(progression=("Am", "F", "C", "G"), pattern="D-DU-UDU", bpm=96, loops=4, seed=0, capo=0):
-    """pattern — 8 восьмых на такт: D вниз, U вверх, - пропуск."""
+    """pattern — 8 восьмых или 16 шестнадцатых на такт: D вниз, U вверх, - пропуск."""
     rng = np.random.default_rng(seed)
-    eighth = 60 / bpm / 2
-    total = int((len(progression) * loops * 8 + 4) * eighth * SR)
+    eighth = 60 / bpm * 4 / len(pattern)
+    n = len(pattern)
+    total = int((len(progression) * loops * n + n // 2) * eighth * SR)
     y = np.zeros(total)
     events = []
     t0 = 0.3
@@ -52,10 +53,12 @@ def song(progression=("Am", "F", "C", "G"), pattern="D-DU-UDU", bpm=96, loops=4,
             for k, ch in enumerate(pattern):
                 if ch == "-":
                     continue
-                t = t0 + ((loop * len(progression) + ci) * 8 + k) * eighth
+                t = t0 + ((loop * len(progression) + ci) * n + k) * eighth
                 d = "down" if ch == "D" else "up"
-                g = 1.0 if k in (0, 4) else 0.8
-                s = strum(frets, d, eighth * 2.5, rng, gain=g)
+                g = 1.0 if k % (n // 4) == 0 else 0.6
+                s = strum(frets, d, 60 / bpm * 1.25, rng, gain=g)
+                fade = int(0.04 * SR)  # без затухания обрыв звука даёт ложную «атаку»
+                s[-fade:] *= np.linspace(1, 0, fade)
                 a = int(t * SR)
                 y[a: a + len(s)] += s[: max(0, total - a)]
                 events.append({"t": t, "dir": d, "chord": chord})

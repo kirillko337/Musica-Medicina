@@ -64,3 +64,11 @@ if __name__ == "__main__":
                   "dir", round(da, 2), "pattern", strum.short(st["pattern"]),
                   [s["chord"] for s in res["segments"]][:10])
             print(strum.render(st["pattern"]))
+
+
+def test_sanjuanito_16ths(tmp_path):
+    # бой из La Anaconda: 1 · и а | 2 · и · — «вниз, вниз-вверх, вниз, вниз»
+    res, st, chord_acc, _ = run(tmp_path, ("Am", "Em"), "D-DUD-D-D-DUD-D-", 108)
+    assert chord_acc > 0.85
+    assert st["pattern"]["subdiv"] == 4
+    assert strum.short(st["pattern"]).replace(" ", "") == "Д-ДВД-Д-Д-ДВД-Д-"
