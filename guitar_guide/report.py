@@ -123,6 +123,11 @@ def write(out_dir: Path, meta: dict, res: dict, st: dict, segs: list[dict], capo
                  "Текст распознан автоматически: в редких словах возможны ошибки.\n")
         L.append("```")
         for ln in words["lines"]:
+            if not ln["words"]:
+                L.append(" " * 7 + chord_at(ln["start"]))
+                L.append(f"{_mmss(ln['start']):>5}  (поют {ln['end'] - ln['start']:.0f} с, слова не разобраны)")
+                L.append("")
+                continue
             top, bottom = chord_line(ln["words"], chord_at)
             pad = " " * 7
             L.append(pad + top)

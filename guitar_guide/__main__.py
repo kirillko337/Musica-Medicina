@@ -20,6 +20,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-vision", action="store_true")
     ap.add_argument("--max-vision-calls", type=int, default=24)
     ap.add_argument("--lyrics", action="store_true", help="распознать слова (Demucs + Whisper, нужен интернет)")
+    ap.add_argument("--lyrics-hint", help="подсказка Whisper: редкие слова песни через запятую")
     ap.add_argument("--lang", help="язык песни для Whisper: es, ru, en… (по умолчанию определит сам)")
     args = ap.parse_args(argv)
 
@@ -83,7 +84,7 @@ def main(argv=None) -> int:
     words = None
     if args.lyrics:
         print("▶ слова: расшифровываю голос…", flush=True)
-        words = lyrics.analyze(vocals_wav, args.lang)
+        words = lyrics.analyze(vocals_wav, args.lang, args.lyrics_hint)
         print(f"  строк: {len(words['lines'])}")
 
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)

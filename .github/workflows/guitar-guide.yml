@@ -24,6 +24,9 @@ on:
       lang:
         description: "Язык песни: es, ru, en… (пусто — определит сам)"
         required: false
+      hint:
+        description: "Подсказка для распознавания слов: редкие слова через запятую"
+        required: false
   # с телефона: новый issue по шаблону «Разбор песни»
   issues:
     types: [opened]
@@ -128,6 +131,7 @@ jobs:
           VISION: ${{ github.event_name != 'workflow_dispatch' || inputs.vision }}
           LYRICS: ${{ github.event_name != 'workflow_dispatch' || inputs.lyrics }}
           LANG_IN: ${{ inputs.lang }}
+          HINT: ${{ inputs.hint }}
         run: |
           set -o pipefail
           : > guides_done.txt
@@ -139,6 +143,7 @@ jobs:
             [ "$VISION" != "true" ] && args+=(--no-vision)
             [ "$LYRICS" = "true" ] && args+=(--lyrics)
             [ -n "$LANG_IN" ] && args+=(--lang "$LANG_IN")
+            [ -n "$HINT" ] && args+=(--lyrics-hint "$HINT")
             python -m guitar_guide "${args[@]}" 2>&1 | tee run.log
             grep -oE 'guide_md=.*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- >> guides_done.txt
           done < sources.txt
