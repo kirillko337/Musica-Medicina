@@ -136,7 +136,7 @@ def pattern(onset_list: list[dict], n_beats: int, phase: int, subdiv: int, beats
 
 
 def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_per_bar: int = 4,
-            hit: float = 0.3, accent: float = 0.8) -> dict:
+            hit: float = 0.35, accent: float = 0.8, ranges: list[tuple[float, float]] | None = None) -> dict:
     """Рисунок боя по средней силе удара на каждой из 16 шестнадцатых такта.
 
     Пороговый детектор ударов теряет слабые удары, а «бой» как раз и состоит из сильных
@@ -156,6 +156,8 @@ def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_p
     for i in range(phase, len(bt) - beats_per_bar, beats_per_bar):
         # равномерная сетка на весь такт: трекер долей дёргает отдельные доли на синкопах
         b0, b1 = bt[i], bt[i + beats_per_bar]
+        if ranges is not None and not any(a - 0.1 <= b0 <= b + 0.1 for a, b in ranges):
+            continue  # такт из части с перебором
         n = beats_per_bar * 4
         rows.append([at(b0 + j * (b1 - b0) / n) for j in range(n)])
     if len(rows) < 2:
@@ -166,7 +168,9 @@ def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_p
     med = np.median(R, axis=0)
     hits = med > hit
     per_bar = (R > hit)
-    matching = int((per_bar == hits).all(axis=1).sum())
+    # такт совпал, если в нём на ¾ позиций то же, что в рисунке (удар есть / удара нет):
+    # на живой записи полного совпадения всех 16 шестнадцатых почти не бывает
+    matching = int(((per_bar == hits).mean(axis=1) >= 0.75 + 0.25 * (hits.sum() <= 2)).sum())
     # нечётные шестнадцатые пустые → обычные восьмые
     sub = 4 if hits[1::2].any() else 2
     idx = range(0, len(med), 4 // sub)
@@ -180,7 +184,9 @@ def profile(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_p
             "variants": [], "profile16": [round(float(v), 2) for v in med]}
 
 
-def analyze(y: np.ndarray, sr: int, beat_times: list[float], phase: int) -> dict:
+def analyze(y: np.ndarray, sr: int, beat_times: list[float], phase: int, beats_per_bar: int = 4,
+            ranges: list[tuple[float, float]] | None = None) -> dict:
+    """ranges — части песни с боем (из picking.sections); None — вся песня."""
     ons = [o for o in onsets(y, sr) if o["strength"] >= 0.4]  # отсекаем звон и шум
     subdiv = choose_subdivision(ons, beat_times)
     grid(ons, beat_times, subdiv)
@@ -188,7 +194,7 @@ def analyze(y: np.ndarray, sr: int, beat_times: list[float], phase: int) -> dict
     for o in ons:
         if o.get("pos") is not None:
             o["dir_rule"] = "down" if o["pos"] % 2 == 0 else "up"
-    pat = profile(y, sr, beat_times, phase)
+    pat = profile(y, sr, beat_times, phase, beats_per_bar, ranges=ranges)
     for o in ons:  # направление по маятнику на той сетке, которую выбрал профиль
         if o.get("pos") is not None and pat["subdiv"] != subdiv:
             o["dir_rule"] = None
@@ -210,7 +216,7 @@ def render(pat: dict, beats_per_bar: int = 4) -> str:
     for i, s in enumerate(pat["slots"]):
         beat, k = divmod(i, sub)
         count.append(names[k].format(n=beat + 1))
-        arrows.append({"down": "↓", "up": "↑", None: "·"}[s["dir"]])
+        arrows.append(_SYM[s["dir"]])
         acc.append(">" if s["accent"] else " ")
     w = 3
     line = lambda xs: "".join(x.ljust(w) for x in xs).rstrip()
@@ -229,5 +235,33 @@ def short(pat: dict) -> str:
     for i, s in enumerate(pat["slots"]):
         if i and i % sub == 0:
             out.append(" ")
-        out.append({"down": "Д", "up": "В", None: "-"}[s["dir"]])
+        out.append({"down": "Д", "up": "В", "bass": "Б", None: "-"}[s["dir"]])
     return "".join(out)
+
+
+def attach_kinds(pat: dict, kinds: list[dict | None]) -> None:
+    """Добавляет к ударам тип атаки из распознанных нот (picking.strike_kinds).
+    Если среди ударов есть одиночный бас, это игра пальцами «бас + удар», а не бой медиатором:
+    тогда «маятник» не работает и удары по аккорду пишем вниз."""
+    if not pat["slots"] or not kinds:
+        return
+    step = 4 // pat["subdiv"]
+    for i, sl in enumerate(pat["slots"]):
+        k = kinds[i * step] if i * step < len(kinds) else None
+        if sl["hit"] and (not k or k["share"] < 0.3):
+            # атака есть, а гитарных нот почти никогда нет — это бубен или хлопок, не гитара
+            sl.update(hit=False, dir=None, accent=False, kind=None, percussion=True)
+            continue
+        if sl["hit"] and k["kind"] == "в" and sl.get("strength", 1) < 0.4:
+            # одна верхняя струна и слабая атака — отзвук, а не удар
+            sl.update(hit=False, dir=None, accent=False, kind=None)
+            continue
+        sl["kind"] = k["kind"] if (k and sl["hit"]) else None
+    pat["fingerstyle"] = any(sl.get("kind") == "Б" for sl in pat["slots"])
+    if pat["fingerstyle"]:
+        for sl in pat["slots"]:
+            if sl["hit"]:
+                sl["dir"] = "bass" if sl.get("kind") == "Б" else "down"
+
+
+_SYM = {"down": "↓", "up": "↑", "bass": "Б", None: "·"}

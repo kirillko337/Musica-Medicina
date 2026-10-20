@@ -36,6 +36,39 @@ def beats(y_perc: np.ndarray, sr: int, bpm: float | None = None) -> tuple[float,
     return tempo, times
 
 
+def beats_nn(path: str) -> dict | None:
+    """Доли и сильные доли нейросетью: beat_this (CPJKU, 2024), если нет — madmom (RNN + DBN).
+    librosa ищет только доли и на живой игре с плавающим темпом часто ошибается в 1,5–2 раза;
+    эти модели дают ещё и начало такта, то есть размер и сетку для боя и перебора."""
+    try:
+        from beat_this.inference import File2Beats
+
+        b, d = File2Beats(checkpoint_path="final0", device="cpu", dbn=False)(path)
+        src = "beat_this"
+    except Exception as e:  # нет пакета или весов
+        print(f"  beat_this недоступен ({type(e).__name__}), пробую madmom")
+        try:
+            from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
+
+            act = RNNDownBeatProcessor()(path)
+            bb = DBNDownBeatTrackingProcessor(beats_per_bar=[3, 4], fps=100, min_bpm=50, max_bpm=190)(act)
+            b, d = bb[:, 0], bb[bb[:, 1] == 1, 0]
+            src = "madmom"
+        except Exception as e2:
+            print(f"  madmom недоступен ({type(e2).__name__}), доли считает librosa")
+            return None
+    b, d = np.asarray(b, float), np.asarray(d, float)
+    if len(b) < 8:
+        return None
+    # размер: сколько долей между соседними сильными
+    idx = np.searchsorted(b, d - 0.05)
+    per = np.diff(idx)
+    per = per[(per >= 2) & (per <= 7)]
+    bpb = int(np.bincount(per).argmax()) if len(per) else 4
+    first = int(np.searchsorted(b, d[0] - 0.05)) if len(d) else 0
+    return {"beats": b, "downbeats": d, "beats_per_bar": bpb, "phase": first % bpb, "source": src}
+
+
 def _extend(times: np.ndarray, duration: float) -> np.ndarray:
     """beat_track часто пропускает начало и конец записи — достраиваем сетку с тем же шагом."""
     if len(times) < 2:
@@ -58,7 +91,7 @@ def key(chroma: np.ndarray) -> str:
 
 
 def chords(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, sevenths: bool = False,
-           p_stay: float = 0.85) -> dict:
+           p_stay: float = 0.85, vocab: list[str] | None = None) -> dict:
     tuning = float(librosa.estimate_tuning(y=y_harm, sr=sr))
     chroma = librosa.feature.chroma_cqt(y=y_harm, sr=sr, hop_length=HOP, tuning=tuning, bins_per_octave=36)
     bass = librosa.feature.chroma_cqt(y=y_harm, sr=sr, hop_length=HOP, tuning=tuning,
@@ -83,6 +116,9 @@ def chords(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, sevenths: bool =
     sim = sim + 0.15 * bn[roots, :]
     if sevenths:  # септаккорды берём только при явном перевесе
         sim[24:, :] -= 0.04
+    vocab_info = None
+    if vocab:
+        sim, vocab_info = _apply_vocab(sim, labels, vocab, r_sync)
 
     # состояние «нет аккорда» для тишины
     quiet = r_sync < 0.1 * (np.percentile(r_sync, 90) + 1e-9)
@@ -97,6 +133,9 @@ def chords(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, sevenths: bool =
 
     beat_labels = [labels[i] for i in path]
     beat_conf = [float(prob[i, t]) for t, i in enumerate(path)]
+
+    song_key = key(chroma)
+    beat_labels = resolve_fifths(beat_labels, c_sync, song_key)
 
     segments = []
     for t, lab in enumerate(beat_labels):
@@ -113,12 +152,83 @@ def chords(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, sevenths: bool =
 
     return {
         "tuning_cents": round(tuning * 100, 1),
-        "key": key(chroma),
+        "key": song_key,
         "grid_times": [round(float(t), 3) for t in seg_times],
         "grid_chords": beat_labels,
         "grid_pickup": pickup,
         "segments": segments,
+        "vocab": vocab_info,
     }
+
+
+def _apply_vocab(sim: np.ndarray, labels: list[str], vocab: list[str], r_sync: np.ndarray,
+                 min_fit: float = 0.9) -> tuple[np.ndarray, dict | None]:
+    """Оставляет только аккорды из словаря (подписи на экране). Подписи бывают формами при каподастре,
+    поэтому пробуем сдвиги 0–7 и берём тот, что лучше объясняет звук. Если даже лучший сдвиг
+    объясняет звук заметно хуже, чем полный набор шаблонов, словарь не про эту песню — игнорируем."""
+    loud = r_sync >= np.percentile(r_sync, 30)
+    best_all = sim[:, loud].max(axis=0).mean()
+    idx = {l: i for i, l in enumerate(labels)}
+    best = None
+    for shift in range(0, 8):
+        allowed = set()
+        for v in vocab:
+            p = theory.parse(v)
+            if p is None:
+                continue
+            lab = theory.name(p[0] + shift, p[1])
+            if lab not in idx:  # септаккорд без шаблонов септаккордов — берём трезвучие
+                lab = theory.name(p[0] + shift, "m" if p[1].startswith("m") else "")
+            if lab in idx:
+                allowed.add(idx[lab])
+        if len(allowed) < 2:
+            continue
+        fit = sim[sorted(allowed)][:, loud].max(axis=0).mean() / (best_all + 1e-9)
+        if best is None or fit > best[0]:
+            best = (fit, shift, allowed)
+    if best is None or best[0] < min_fit:
+        return sim, {"used": False, "fit": round(float(best[0]), 3) if best else None}
+    fit, shift, allowed = best
+    out = sim.copy()
+    mask = np.ones(len(labels), bool)
+    mask[list(allowed)] = False
+    out[mask] -= 1.0
+    return out, {"used": True, "shift": shift, "fit": round(float(fit), 3),
+                 "chords": [labels[i] for i in sorted(allowed)]}
+
+
+# Диатонические аккорды: ступень от тоники → качество (натуральный мажор и минор + доминанта)
+_DIATONIC = {"": {0: "", 2: "m", 4: "m", 5: "", 7: "", 9: "m"},
+             "m": {0: "m", 3: "", 5: "m", 7: "", 8: "", 10: ""}}
+
+
+def resolve_fifths(labels: list[str], c_sync: np.ndarray, song_key: str, min_third: float = 0.3) -> list[str]:
+    """Аккорд без терции (звучат только тоника и квинта, как D-A-D) не бывает ни мажором, ни минором:
+    шаблоны выбирают наугад, обычно мажор. Такой участок называем по тональности: в ре миноре D5 → Dm.
+    Проверено на He Yama Yo: в интро Dm играется без 1-й струны, и все детекторы писали D."""
+    kp = theory.parse(song_key)
+    if kp is None:
+        return labels
+    tonic, mode = kp
+    out = list(labels)
+    i = 0
+    while i < len(labels):
+        j = i
+        while j < len(labels) and labels[j] == labels[i]:
+            j += 1
+        p = theory.parse(labels[i])
+        if p is not None:
+            root, q = p
+            c = c_sync[:, i:j].mean(axis=1)
+            third = max(c[(root + 3) % 12], c[(root + 4) % 12])
+            frame = max(c[root], c[(root + 7) % 12]) + 1e-9
+            deg = (root - tonic) % 12
+            want = _DIATONIC[mode if mode in _DIATONIC else ""].get(deg)
+            if third / frame < min_third and want is not None:
+                newq = want + ("7" if q.endswith("7") and want == "" else "")
+                out[i:j] = [theory.name(root, newq)] * (j - i)
+        i = j
+    return out
 
 
 def halfbars(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, phase: int) -> list[dict]:
@@ -148,6 +258,17 @@ def halfbars(y_harm: np.ndarray, sr: int, beat_times: np.ndarray, phase: int) ->
     return out
 
 
+def tempo_curve(beat_times: np.ndarray, window: float = 30.0) -> list[dict]:
+    """Темп по полуминутам: живые записи часто разгоняются к концу."""
+    bt = np.asarray(beat_times)
+    out = []
+    for a in np.arange(0, bt[-1], window):
+        m = (bt >= a) & (bt < a + window)
+        if m.sum() > 4:
+            out.append({"t": round(float(a)), "bpm": round(60.0 / float(np.median(np.diff(bt[m]))))})
+    return out
+
+
 def downbeat_phase(grid_chords: list[str], beats_per_bar: int = 4) -> int:
     """Сильная доля: на какую фазу чаще всего приходится смена аккорда."""
     counts = np.zeros(beats_per_bar)
@@ -157,18 +278,34 @@ def downbeat_phase(grid_chords: list[str], beats_per_bar: int = 4) -> int:
     return int(np.argmax(counts)) if counts.sum() else 0
 
 
-def analyze(path: str, bpm: float | None = None, sevenths: bool = False) -> tuple[dict, np.ndarray, int]:
+def analyze(path: str, bpm: float | None = None, sevenths: bool = False, nn: bool = True,
+            vocab: list[str] | None = None) -> tuple[dict, np.ndarray, int]:
     y, sr = load(path)
     y_harm, y_perc = librosa.effects.hpss(y)
-    tempo, beat_times = beats(y_perc, sr, bpm)
+    net = beats_nn(path) if nn and bpm is None else None
+    if net:
+        beat_times = net["beats"]
+        tempo = 60.0 / float(np.median(np.diff(beat_times)))
+        n_head = int(np.sum(_extend(beat_times, len(y) / sr) < beat_times[0] - 1e-6))
+        beat_times = _extend(beat_times, len(y) / sr)
+        net["phase"] = (net["phase"] + n_head) % net["beats_per_bar"]
+    else:
+        tempo, beat_times = beats(y_perc, sr, bpm)
     if len(beat_times) < 4:
         raise RuntimeError("Не удалось найти доли — запись слишком короткая или без ритма")
-    res = chords(y_harm, sr, beat_times, sevenths=sevenths)
+    if vocab and any(theory.parse(v) and theory.parse(v)[1].endswith("7") for v in vocab):
+        sevenths = True  # на экране есть септаккорды — нужны их шаблоны
+    res = chords(y_harm, sr, beat_times, sevenths=sevenths, vocab=vocab)
     res["tempo"] = round(tempo, 1)
     res["beats"] = [round(float(t), 3) for t in beat_times]
     res["duration"] = round(len(y) / sr, 2)
     # аккорды по долям (без затакта до первой доли)
     res["beat_chords"] = res["grid_chords"][res["grid_pickup"]:][: len(beat_times)]
-    res["downbeat_phase"] = downbeat_phase(res["beat_chords"])
+    if net:
+        res["downbeat_phase"], res["beats_per_bar"], res["beat_source"] = net["phase"], net["beats_per_bar"], net["source"]
+        res["downbeats"] = [round(float(t), 3) for t in net["downbeats"]]
+    else:
+        res["downbeat_phase"], res["beats_per_bar"], res["beat_source"] = downbeat_phase(res["beat_chords"]), 4, "librosa"
+    res["tempo_curve"] = tempo_curve(beat_times)
     res["halfbars"] = halfbars(y_harm, sr, beat_times, res["downbeat_phase"])
     return res, y, sr

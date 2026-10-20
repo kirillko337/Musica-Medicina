@@ -6,3 +6,11 @@ opencv-python-headless>=4.9
 anthropic>=1.11
 yt-dlp>=2026.8.19
 pytest>=8
+# доли и сильные доли (madmom с PyPI не ставится на Python ≥3.10, берём из git; модели внутри пакета)
+Cython>=3
+madmom @ git+https://github.com/CPJKU/madmom.git
+# зависимости basic-pitch (сам он в requirements-notes.txt, ставится с --no-deps без TensorFlow)
+onnxruntime>=1.17
+pretty_midi>=0.2.10
+mir_eval>=0.7
+resampy>=0.4.2

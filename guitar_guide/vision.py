@@ -89,7 +89,7 @@ def _img_block(frame: np.ndarray) -> dict:
                                         "data": base64.standard_b64encode(buf.tobytes()).decode()}}
 
 
-def _ask(content: list[dict], schema: dict, effort: str = "high") -> dict | None:
+def _ask(content: list[dict], schema: dict, effort: str = "high", system: str = SYSTEM) -> dict | None:
     client = _client()
     resp = client.beta.messages.create(
         model=MODEL,
@@ -98,13 +98,56 @@ def _ask(content: list[dict], schema: dict, effort: str = "high") -> dict | None
         fallbacks="default",
         thinking={"type": "adaptive"},
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-        system=SYSTEM,
+        system=system,
         messages=[{"role": "user", "content": content}],
     )
     if resp.stop_reason == "refusal":
         return None
     text = next((b.text for b in resp.content if b.type == "text"), None)
     return json.loads(text) if text else None
+
+
+_ONSCREEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "chords": {"type": "array", "items": {"type": "string"},
+                   "description": "Все названия аккордов, которые видны как текст или над схемами, как написано: Dm, A7, Bb, F#m7"},
+        "diagrams": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"chord": {"type": "string"},
+                           "frets": {"type": "array", "items": {"type": "integer"},
+                                     "description": "6 чисел, струны 6→1: -1 не играется (×), 0 открытая, иначе лад"},
+                           "fingers": {"type": "string", "description": "цифры пальцев под схемой, если подписаны, иначе пусто"}},
+            "required": ["chord", "frets", "fingers"], "additionalProperties": False}},
+        "capo_text": {"type": "integer", "description": "каподастр, если он указан текстом; -1 если не указан"},
+        "lyrics_lines": {"type": "array", "items": {"type": "string"},
+                         "description": "строки текста песни с экрана, если есть (без аккордов)"},
+    },
+    "required": ["chords", "diagrams", "capo_text", "lyrics_lines"],
+    "additionalProperties": False,
+}
+
+ONSCREEN_SYSTEM = (
+    "Ты читаешь текст с кадров видеоурока гитары. Нужны только надписи, которые видны на экране: "
+    "названия аккордов, схемы аккордов (аппликатуры), указание каподастра, строки песни. "
+    "Ничего не додумывай по рукам музыканта: если надписей нет, верни пустые списки. "
+    "На схеме аккорда струны идут слева направо от 6-й (толстой) к 1-й; × — струна не играется, ○ — открытая."
+)
+
+
+def onscreen(video: str, duration: float, n: int = 8) -> dict | None:
+    """Подписи с экрана: многие уроки показывают аккорды, схемы и текст. Это самый надёжный словарь
+    аккордов песни: по звуку Dm без 1-й струны неотличим от D, а на экране написано «Dm»."""
+    times = [duration * (k + 0.5) / n for k in range(n)]
+    frames = [f for f in (frame_at(video, t) for t in times) if f is not None]
+    if not frames:
+        return None
+    content = [_img_block(f) for f in frames] + [{
+        "type": "text",
+        "text": f"{len(frames)} кадров, равномерно по ролику. Выпиши все названия аккордов и схемы аккордов, "
+                "которые видны на экране, указание каподастра и строки текста песни.",
+    }]
+    return _ask(content, _ONSCREEN_SCHEMA, effort="medium", system=ONSCREEN_SYSTEM)
 
 
 def overview(video: str, duration: float) -> dict | None:

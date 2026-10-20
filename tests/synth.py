@@ -64,3 +64,27 @@ def song(progression=("Am", "F", "C", "G"), pattern="D-DU-UDU", bpm=96, loops=4,
                 events.append({"t": t, "dir": d, "chord": chord})
     y /= np.abs(y).max() + 1e-9
     return y.astype(np.float32), events
+
+
+def arpeggio(progression=("Dm", "Am"), patterns=None, bpm=72, loops=4, seed=1):
+    """Перебор: на каждую восьмую одна струна. patterns — {аккорд: [струны 1..6 на 8 восьмых]}."""
+    rng = np.random.default_rng(seed)
+    patterns = patterns or {}
+    eighth = 60 / bpm / 2
+    total = int((len(progression) * loops * 8 + 6) * eighth * SR)
+    y = np.zeros(total)
+    t0 = 0.3
+    for loop in range(loops):
+        for ci, chord in enumerate(progression):
+            frets = theory.shape_for(chord)["frets"]
+            for k, string in enumerate(patterns[chord]):
+                f = frets[6 - string]
+                midi = OPEN_MIDI[6 - string] + f
+                tone = pluck(440 * 2 ** ((midi - 69) / 12), eighth * 3, rng, bright=0.6)
+                tone *= 1.0 if k % 4 == 0 else 0.7
+                fade = int(0.04 * SR)
+                tone[-fade:] *= np.linspace(1, 0, fade)
+                a = int((t0 + ((loop * len(progression) + ci) * 8 + k) * eighth) * SR)
+                y[a: a + len(tone)] += tone[: max(0, total - a)]
+    y /= np.abs(y).max() + 1e-9
+    return y.astype(np.float32)

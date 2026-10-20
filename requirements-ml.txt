@@ -1,0 +1,5 @@
+# ставить после torch (CPU): pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# доли и такты нейросетью (CPJKU, 2024), веса скачиваются с cloud.cp.jku.at
+beat-this>=1.1
+# запасное разделение голоса, если Demucs не скачал веса: UVR MDX-Net, веса на GitHub
+audio-separator[cpu]>=0.30

@@ -7,11 +7,28 @@ from pathlib import Path
 
 
 def separate(wav: str, work: Path) -> dict:
-    """{'vocals': голос, 'no_vocals': всё остальное, то есть гитара}."""
+    """{'vocals': голос, 'no_vocals': всё остальное, то есть гитара}.
+
+    Сначала Demucs (htdemucs). Если его веса не скачались (их раздаёт dl.fbaipublicfiles.com),
+    берём UVR MDX-Net Inst HQ3 через audio-separator: веса лежат на GitHub, голос он убирает не хуже."""
     out = work / "demucs"
-    subprocess.run([sys.executable, "-m", "demucs", "--two-stems=vocals", "-n", "htdemucs", "-o", str(out), wav],
-                   check=True)
-    return {"vocals": str(next(out.rglob("vocals.wav"))), "no_vocals": str(next(out.rglob("no_vocals.wav")))}
+    try:
+        subprocess.run([sys.executable, "-m", "demucs", "--two-stems=vocals", "-n", "htdemucs", "-o", str(out), wav],
+                       check=True)
+        return {"vocals": str(next(out.rglob("vocals.wav"))), "no_vocals": str(next(out.rglob("no_vocals.wav"))),
+                "separator": "Demucs htdemucs"}
+    except Exception as e:
+        print(f"  Demucs не сработал ({type(e).__name__}), пробую UVR MDX-Net")
+    from audio_separator.separator import Separator
+
+    out = work / "uvr"
+    out.mkdir(parents=True, exist_ok=True)
+    sep = Separator(output_dir=str(out), model_file_dir=str(work / "uvr_models"))
+    sep.load_model(model_filename="UVR-MDX-NET-Inst_HQ_3.onnx")
+    files = [str(out / Path(f).name) for f in sep.separate(wav)]
+    voc = next(f for f in files if "(Vocals)" in f)
+    inst = next(f for f in files if "(Instrumental)" in f)
+    return {"vocals": voc, "no_vocals": inst, "separator": "UVR MDX-Net Inst HQ3"}
 
 
 # Фразы, которые Whisper выдумывает на музыке и тишине

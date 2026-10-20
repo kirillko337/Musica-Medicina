@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audio, compare, fetch, report, strum, theory, vision
+from . import audio, compare, fetch, picking, report, strum, theory, vision
 
 
 def main(argv=None) -> int:
@@ -24,6 +24,8 @@ def main(argv=None) -> int:
     ap.add_argument("--save-stems", action="store_true", help="сохранить гитару и голос в папку гайда (.ogg)")
     ap.add_argument("--lyrics-hint", help="подсказка Whisper: редкие слова песни через запятую")
     ap.add_argument("--lang", help="язык песни для Whisper: es, ru, en… (по умолчанию определит сам)")
+    ap.add_argument("--chords", help="аккорды песни через запятую, если известны (как подписи на экране): Dm,A7,Bb")
+    ap.add_argument("--no-picking", action="store_true", help="не распознавать ноты (перебор)")
     args = ap.parse_args(argv)
 
     work = Path(args.work)
@@ -48,21 +50,39 @@ def main(argv=None) -> int:
         except Exception as e:
             print(f"  demucs не сработал ({e}), дальше по общей дорожке")
 
+    use_vision = not args.no_vision and meta.get("video") and vision.available()
+    onscreen = None
+    if use_vision:
+        print("▶ видео: подписи на экране…", flush=True)
+        try:
+            onscreen = vision.onscreen(meta["video"], fetch.duration(audio_src))
+            print(f"  {json.dumps(onscreen, ensure_ascii=False)[:300]}")
+        except Exception as e:
+            print(f"  не вышло ({type(e).__name__}: {str(e)[:120]})")
+    vocab = [c.strip() for c in args.chords.split(",")] if args.chords else None
+    if not vocab and onscreen and len(onscreen.get("chords") or []) >= 2:
+        vocab = onscreen["chords"]
+
     print("▶ звук: темп, доли, аккорды…", flush=True)
-    res, y, sr = audio.analyze(chord_wav, bpm=args.bpm, sevenths=args.sevenths)
-    print(f"  темп {res['tempo']} BPM, тональность {res['key']}, сегментов {len(res['segments'])}")
+    res, y, sr = audio.analyze(chord_wav, bpm=args.bpm, sevenths=args.sevenths, vocab=vocab)
+    print(f"  доли: {res['beat_source']}, темп {res['tempo']:.0f} BPM, размер {res['beats_per_bar']}/4, "
+          f"тональность {res['key']}, сегментов {len(res['segments'])}, словарь {res.get('vocab')}")
 
     print("▶ звук: бой…", flush=True)
-    st = strum.analyze(y, sr, res["beats"], res["downbeat_phase"])
+    st = strum.analyze(y, sr, res["beats"], res["downbeat_phase"], res["beats_per_bar"])
     print(f"  рисунок: {strum.short(st['pattern'])}")
 
     weights = [s["end"] - s["start"] for s in res["segments"]]
     capo_opts = theory.best_capo([s["chord"] for s in res["segments"]], weights)
     capo_audio = capo_opts[0]["capo"]
     capo, capo_src = capo_audio, "подобран по звуку под открытые аккорды"
+    if res.get("vocab") and res["vocab"].get("used"):
+        capo, capo_src = res["vocab"]["shift"], "по подписям аккордов на экране"
+    if onscreen and onscreen.get("capo_text", -1) >= 0:
+        capo, capo_src = onscreen["capo_text"], "указан на экране"
 
     vision_info, vis_rows = None, []
-    if not args.no_vision and meta.get("video") and vision.available():
+    if use_vision:
         print("▶ видео: обзор кадра…", flush=True)
         over = vision.overview(meta["video"], res["duration"]) or {}
         print(f"  {json.dumps(over, ensure_ascii=False)}")
@@ -90,6 +110,33 @@ def main(argv=None) -> int:
         print(f"  строк: {len(words['lines'])}")
 
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)
+    shapes = {theory.name(*theory.parse(d["chord"])): d["frets"] for d in (onscreen or {}).get("diagrams", [])
+              if len(d.get("frets") or []) == 6 and theory.parse(d["chord"])}
+
+    pick = None
+    if not args.no_picking:
+        print("▶ звук: ноты (basic-pitch) и перебор…", flush=True)
+        try:
+            notes = picking.transcribe(chord_wav)
+            half = picking.half_tempo(res["beats"], res["downbeat_phase"], res["beats_per_bar"], notes, segs, y, sr)
+            if half:
+                res["beats"], res["downbeat_phase"] = half
+                res["tempo"] = round(res["tempo"] / 2, 1)
+                res["tempo_curve"] = audio.tempo_curve(audio.np.asarray(res["beats"]))
+                print(f"  перебор ровными восьмыми: темп был вдвое завышен, теперь {res['tempo']:.0f} BPM")
+            pick = picking.analyze(notes, res["beats"], res["downbeat_phase"], segs, capo, res["beats_per_bar"],
+                                   y, sr, shapes=shapes)
+            print("  части: " + ", ".join(f"{s['style']} {s['start']:.0f}–{s['end']:.0f} с" for s in pick["sections"]))
+        except Exception as e:
+            print(f"  ноты не распознаны ({type(e).__name__}: {str(e)[:120]})")
+    if pick:
+        bar_len = 60.0 / res["tempo"] * res["beats_per_bar"]
+        ranges = [(s["start"], s["end"] + bar_len) for s in pick["sections"] if s["style"] == "бой"]
+        if ranges:  # бой считаем только там, где он есть: перебор во вступлении портит рисунок
+            st["pattern"] = strum.analyze(y, sr, res["beats"], res["downbeat_phase"], res["beats_per_bar"],
+                                          ranges)["pattern"]
+            strum.attach_kinds(st["pattern"], picking.strike_kinds(pick["bars"], ranges))
+
     name = fetch.slug(meta.get("title") or meta.get("id") or "song")
     out_dir = Path(args.out) / name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -98,11 +145,13 @@ def main(argv=None) -> int:
         for stem, src in (("guitar", chord_wav), ("vocals", vocals_wav)):
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ac", "1", "-c:a", "libvorbis",
                             "-q:a", "4", str(out_dir / f"{stem}.ogg")], check=True)
-    path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info, words)
+    path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info, words,
+                        pick=pick, onscreen=onscreen, shapes=shapes)
 
     dump = {"meta": {k: v for k, v in meta.items() if k not in ("video", "audio_src")}, "audio": res,
             "strum": st, "capo": capo, "capo_options": capo_opts[:3], "segments": segs,
-            "vision": vision_info, "vision_raw": vis_rows, "lyrics": words}
+            "vision": vision_info, "vision_raw": vis_rows, "lyrics": words, "onscreen": onscreen,
+            "picking": {k: v for k, v in (pick or {}).items() if k != "bars"} or None}
     (out_dir / "analysis.json").write_text(json.dumps(dump, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"✔ гайд: {path}")
     gh_out = Path(__import__("os").environ.get("GITHUB_OUTPUT", "/dev/null"))

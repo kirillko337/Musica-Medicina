@@ -31,6 +31,9 @@ on:
       hint:
         description: "Подсказка для распознавания слов: редкие слова через запятую"
         required: false
+      chords:
+        description: "Аккорды песни через запятую, если известны (Dm,A7,Bb) — распознавание выберет только из них"
+        required: false
   # с телефона: новый issue по шаблону «Разбор песни»
   issues:
     types: [opened]
@@ -57,7 +60,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt && pip install --no-deps -r requirements-notes.txt
       - name: Тесты на синтетике
         run: python -m pytest -q tests
 
@@ -77,13 +80,16 @@ jobs:
 
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt && pip install --no-deps -r requirements-notes.txt
+
+      - name: Нейросети (доли, разделение голоса)
+        run: |
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-ml.txt
 
       - name: Модели для слов
         if: github.event_name != 'workflow_dispatch' || inputs.lyrics || inputs.stems
-        run: |
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements-lyrics.txt
+        run: pip install -r requirements-lyrics.txt
 
       # yt-dlp нужен JS-движок, чтобы YouTube отдал все форматы
       - uses: denoland/setup-deno@v2
@@ -137,6 +143,7 @@ jobs:
           LANG_IN: ${{ inputs.lang }}
           HINT: ${{ inputs.hint }}
           STEMS: ${{ inputs.stems }}
+          CHORDS: ${{ inputs.chords }}
         run: |
           set -o pipefail
           : > guides_done.txt
@@ -150,6 +157,9 @@ jobs:
             [ -n "$LANG_IN" ] && args+=(--lang "$LANG_IN")
             [ -n "$HINT" ] && args+=(--lyrics-hint "$HINT")
             [ "$STEMS" = "true" ] && args+=(--save-stems)
+            [ -n "$CHORDS" ] && args+=(--chords "$CHORDS")
+            # голос отделяем всегда: он сбивает аккорды и ноты перебора
+            args+=(--separate)
             python -m guitar_guide "${args[@]}" 2>&1 | tee run.log
             grep -oE 'guide_md=.*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- >> guides_done.txt
           done < sources.txt
