@@ -1,0 +1,8 @@
+# Ноты и пальцы. basic-pitch ставится отдельно без зависимостей (иначе тянет TensorFlow):
+#   pip install -r requirements-notes.txt && pip install --no-deps basic-pitch==0.4.0
+onnxruntime>=1.18
+mediapipe>=0.10.14
+pretty_midi>=0.2.10
+mir_eval>=0.7
+resampy>=0.4
+scikit-learn>=1.3

@@ -24,6 +24,8 @@ def main(argv=None) -> int:
     ap.add_argument("--save-stems", action="store_true", help="сохранить гитару и голос в папку гайда (.ogg)")
     ap.add_argument("--lyrics-hint", help="подсказка Whisper: редкие слова песни через запятую")
     ap.add_argument("--lang", help="язык песни для Whisper: es, ru, en… (по умолчанию определит сам)")
+    ap.add_argument("--no-notes", action="store_true", help="не распознавать отдельные ноты (Basic Pitch)")
+    ap.add_argument("--no-hands", action="store_true", help="не отслеживать пальцы на видео (MediaPipe)")
     args = ap.parse_args(argv)
 
     work = Path(args.work)
@@ -90,6 +92,32 @@ def main(argv=None) -> int:
         print(f"  строк: {len(words['lines'])}")
 
     segs = compare.consensus(res["segments"], vision_info["chords"]["rows"] if vision_info else [], capo)
+    nres = hres = None
+    if not args.no_notes:
+        try:
+            from . import notes as notes_mod
+            print("▶ ноты: Basic Pitch, фильтр артефактов, второй метод, струны…", flush=True)
+            nres = notes_mod.analyze(chord_wav, res, segs, capo)
+            print(f"  нот {len(nres['notes'])} из {nres['raw_count']}, "
+                  f"{'перебор' if nres['kind']['picking'] else 'бой'}, "
+                  f"такт {nres['beats_per_bar']}×{nres['per_beat']}, аккорды по нотам/хроме "
+                  f"{nres['chords_vs_chroma']['share'] * 100:.0f}%")
+        except ImportError as e:
+            print(f"  ноты пропущены: {e}")
+    if nres and meta.get("video") and not args.no_hands:
+        from . import hands
+        if hands.available():
+            print("▶ видео: пальцы обеих рук (MediaPipe)…", flush=True)
+            try:
+                hres = hands.analyze(meta["video"], nres["notes"], nres["note_bars"], nres["rejected"])
+                fixes = notes_mod.apply_video_chords(nres, hres["bar_checks"], capo, rescued=hres["rescued"])
+                print(f"  сдвиг видео {hres['lag']:+.2f} с, исправлено по левой руке тактов: {len(fixes)}, "
+                      f"нот возвращено по пальцам: {len(hres['rescued'])}")
+                hres = {k: v for k, v in hres.items() if k != "rescued"}
+            except Exception as e:
+                print(f"  руки не распознаны: {e}")
+                hres = None
+
     name = fetch.slug(meta.get("title") or meta.get("id") or "song")
     out_dir = Path(args.out) / name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -99,11 +127,19 @@ def main(argv=None) -> int:
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ac", "1", "-c:a", "libvorbis",
                             "-q:a", "4", str(out_dir / f"{stem}.ogg")], check=True)
     path = report.write(out_dir, meta, res, st, segs, capo, capo_src, vision_info, words)
+    if nres:
+        notes_mod.write_midi(nres["notes"], str(out_dir / "guitar-notes.mid"))
+        notes_mod.write_csv(nres, str(out_dir / "notes.csv"))
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n" + notes_mod.report_md(nres, hres, capo))
 
     dump = {"meta": {k: v for k, v in meta.items() if k not in ("video", "audio_src")}, "audio": res,
             "strum": st, "capo": capo, "capo_options": capo_opts[:3], "segments": segs,
-            "vision": vision_info, "vision_raw": vis_rows, "lyrics": words}
-    (out_dir / "analysis.json").write_text(json.dumps(dump, ensure_ascii=False, indent=1), encoding="utf-8")
+            "vision": vision_info, "vision_raw": vis_rows, "lyrics": words,
+            "notes": {k: v for k, v in nres.items() if k != "beats_shifted"} if nres else None,
+            "hands": hres}
+    (out_dir / "analysis.json").write_text(json.dumps(dump, ensure_ascii=False, indent=1,
+                                                      default=lambda o: o.item() if hasattr(o, "item") else str(o)), encoding="utf-8")
     print(f"✔ гайд: {path}")
     gh_out = Path(__import__("os").environ.get("GITHUB_OUTPUT", "/dev/null"))
     with open(gh_out, "a") as f:
