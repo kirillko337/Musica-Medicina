@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Abuelito Fuego</title>
+<style>
+  :root { --ink:#1b1b1b; --soft:#555; --paper:#fbfaf7; --line:#1b1b1b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#d9d6cf; font-family: Calibri, "Carlito", "Segoe UI", Arial, sans-serif; color:var(--ink); }
+  .sheet { width:820px; margin:24px auto; background:var(--paper); padding:40px 48px 44px; box-shadow:0 2px 14px rgba(0,0,0,.25); }
+  h1 { text-align:center; font-size:27px; font-weight:700; margin:0 0 4px; }
+  .sub { text-align:center; font-size:14px; color:var(--soft); margin-bottom:20px; }
+  .info { display:flex; gap:22px; justify-content:center; font-size:14px; margin-bottom:18px; flex-wrap:wrap; }
+  .info b { font-weight:700; }
+  h2 { font-size:15px; font-weight:700; margin:20px 0 4px; }
+  h2 small { font-weight:400; color:var(--soft); }
+  .row { display:grid; grid-template-columns:repeat(4,1fr) 10px; margin:2px 0 8px; }
+  .bar { display:grid; grid-template-columns:1fr 1fr; border-left:2px solid var(--line); padding-left:5px; min-height:44px; }
+  .bar .h { padding-right:4px; }
+  .bar .h.full { grid-column:1 / span 2; }
+  .end { border-left:2px solid var(--line); }
+  .c { font-weight:700; font-size:18px; display:block; line-height:1.15; }
+  .c.none { visibility:hidden; }
+  .w { font-size:13px; display:block; margin-top:2px; }
+  .strum { border:1.5px solid var(--line); padding:10px 14px 12px; margin:6px 0 4px; }
+  table.grid { border-collapse:collapse; font-size:17px; margin:2px 0 4px; }
+  table.grid td { width:46px; text-align:center; padding:2px 0; }
+  table.grid tr.count td { font-size:13px; color:var(--soft); }
+  table.grid tr.hit td { font-size:24px; font-weight:700; }
+  table.grid tr.acc td { font-size:12px; }
+  table.grid td.sep { width:18px; border-left:1.5px solid var(--line); }
+  .note { font-size:13px; line-height:1.45; }
+  .order { font-size:14px; line-height:1.6; }
+  .order span { white-space:nowrap; }
+  .chords { display:flex; gap:10px; justify-content:center; margin:4px 0 6px; }
+  .chords img { width:84px; }
+  .foot { font-size:11px; color:var(--soft); margin-top:18px; text-align:right; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <h1>Abuelito Fuego</h1>
+  <div class="sub">Snimshai &amp; Susana · Todo Brilla</div>
+  <div class="info">
+    <span><b>Каподастр:</b> 5 лад</span>
+    <span><b>Размер:</b> 6/8</span>
+    <span><b>Темп:</b> ~60 (один такт ≈ 2 сек)</span>
+  </div>
+
+  <div class="chords">
+    <img src="chords/Am.svg" alt="Am"><img src="chords/C.svg" alt="C"><img src="chords/G.svg" alt="G"><img src="chords/Em.svg" alt="Em"><img src="chords/Dm.svg" alt="Dm">
+  </div>
+
+  <h2>Бой <small>— один такт = 6 счётов</small></h2>
+  <div class="strum">
+    <table class="grid">
+      <tr class="count"><td>1</td><td>2</td><td>3</td><td class="sep"></td><td>4</td><td>5</td><td>6</td></tr>
+      <tr class="hit"><td>↓</td><td>·</td><td>↑</td><td class="sep"></td><td>↓</td><td>↑</td><td>·</td></tr>
+      <tr class="acc"><td>&gt; бас</td><td></td><td>тихо</td><td class="sep"></td><td>&gt; бас</td><td>тихо</td><td></td></tr>
+    </table>
+    <div class="note">На слух: <b>БУМ — та БУМ-та —</b>, и так по кругу. Вниз по всем струнам на 1 и 4, вверх лёгкие по верхним струнам на 3 и 5. На точках рука не останавливается, просто проходит мимо струн.<br>
+    Если пока сложно: только <b>↓ · · ↓ · ·</b> (на 1 и 4), потом добавить вверх.</div>
+  </div>
+
+  <h2>Куплет <small>— каждая строка поётся два раза</small></h2>
+  <div class="row">
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">Abuelito</span></div></div>
+    <div class="bar"><div class="h"><span class="c">Am</span><span class="w">Fuego las</span></div><div class="h"><span class="c">C</span><span class="w">gracias te</span></div></div>
+    <div class="bar"><div class="h"><span class="c">G</span><span class="w">damos,</span></div><div class="h"><span class="c">Em</span><span class="w">las gracias te</span></div></div>
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">damos</span></div></div>
+    <div class="end"></div>
+  </div>
+  <div class="row">
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">Abuelito</span></div></div>
+    <div class="bar"><div class="h"><span class="c">Am</span><span class="w">Fuego las</span></div><div class="h"><span class="c">C</span><span class="w">gracias te</span></div></div>
+    <div class="bar"><div class="h"><span class="c">Em</span><span class="w">damos,</span></div><div class="h"><span class="c">G</span><span class="w">las gracias te</span></div></div>
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">damos</span></div></div>
+    <div class="end"></div>
+  </div>
+
+  <h2>Припев <small>— ×2</small></h2>
+  <div class="row">
+    <div class="bar"><div class="h full"><span class="c">Dm</span><span class="w">Por abrir el</span></div></div>
+    <div class="bar"><div class="h"><span class="c">C</span><span class="w">corazón</span></div><div class="h"><span class="c">Am</span><span class="w">a la</span></div></div>
+    <div class="bar"><div class="h"><span class="c">G</span><span class="w">sanación,</span></div><div class="h"><span class="c">Em</span><span class="w">abrir-</span></div></div>
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">lo al amor</span></div></div>
+    <div class="end"></div>
+  </div>
+  <div class="row">
+    <div class="bar"><div class="h full"><span class="c">Dm</span><span class="w">Por abrir el</span></div></div>
+    <div class="bar"><div class="h"><span class="c">C</span><span class="w">corazón</span></div><div class="h"><span class="c">Am</span><span class="w">a la</span></div></div>
+    <div class="bar"><div class="h"><span class="c">G</span><span class="w">sanación,</span></div><div class="h"><span class="c">Em</span><span class="w">abrir-</span></div></div>
+    <div class="bar"><div class="h full"><span class="c">Am</span><span class="w">lo al amor</span></div></div>
+    <div class="end"></div>
+  </div>
+
+  <h2>Порядок</h2>
+  <div class="order">
+    В куплете меняется только обращение, аккорды те же. После каждого куплета припев.<br>
+    <span>1. Abuelito Fuego</span> → <span>2. Madrecita Tierra</span> → <span>3. Hermanito Viento (?)</span> → <span>4. Padrecito Cielo</span> → <span>5. Madrecita Tierra</span> → <span>6. A las medicinas <i>(les damos)</i></span> → <span>7. A los abuelitos <i>(les damos)</i></span> → <span>8. Madrecita Tierra</span> → <span><b>Финал:</b> припев по кругу, в конце один удар на <b>Am</b></span>
+  </div>
+
+  <div class="foot">Аккорды и бой сверены по записи: гитара отделена от голоса и барабана</div>
+</div>
+</body>
+</html>
